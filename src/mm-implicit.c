@@ -127,7 +127,24 @@ static block_t *block_from_payload(void *ptr) {
  */
 __attribute__((unused))
 static void coalesce_free_blocks(void) {
-    // TODO (Checkpoint 3)
+    block_t *curr = mm_heap_first;
+
+    while (curr != NULL && curr < mm_heap_last) {
+        block_t *next = (void *)curr + get_size(curr);
+
+	if (!is_allocated(curr) && !is_allocated(next)) {
+	    size_t new_size = get_size(curr) + get_size(next);
+
+	    set_header(curr, new_size, false);
+	    
+	    if (next == mm_heap_last) {
+	        mm_heap_last = curr;
+	    }
+	} else {
+	    curr = next;
+	}
+
+    }
 }
 
 
@@ -164,11 +181,27 @@ void *mm_malloc(size_t size) {
     // The block must have enough space for a header and be 16-byte aligned
     size = round_up(sizeof(block_t) + size, ALIGNMENT);
 
+    coalesce_free_blocks();
+
     // If there is a large enough free block, use it
     block_t *block = find_fit(size);
     if (block != NULL) {
-        set_header(block, get_size(block), true);
-        return block->payload;
+        size_t original_size = get_size(block);
+	size_t remaining_size = original_size - size;
+
+	if (remaining_size >= ALIGNMENT) {
+	    block_t *new_block = (void *)block + size;
+	    set_header(block, size, true);
+	    set_header(new_block, remaining_size, false);
+
+	    if (block == mm_heap_last) {
+	        mm_heap_last = new_block;
+	    }
+	} else {
+	    set_header(block, original_size, true);
+	}
+
+	return block -> payload;
     }
 
     // Otherwise, a new block needs to be allocated at the end of the heap
@@ -216,9 +249,34 @@ void mm_free(void *ptr) {
  * If size is 0, behaves like mm_free(old_ptr) and returns NULL.
  */
 void *mm_realloc(void *old_ptr, size_t size) {
-    (void) old_ptr;
-    (void) size;
-    return NULL;
+    if (old_ptr == NULL) {
+        return mm_malloc(size);
+    }
+
+    if (size == 0) {
+        mm_free(old_ptr);
+	return NULL;
+    }
+
+    void *new_ptr = mm_malloc(size);
+    if (new_ptr == NULL) {
+        return NULL;
+    }
+
+    block_t *old_block = block_from_payload(old_ptr);
+    size_t old_size = get_size(old_block) - sizeof(block_t);
+    size_t copy_size;
+    if (old_size < size) {
+        copy_size = old_size;
+    } else {
+        copy_size = size;
+    }
+
+    memcpy(new_ptr, old_ptr, copy_size);
+
+    mm_free(old_ptr);
+    
+    return new_ptr;
 }
 
 /**
@@ -228,9 +286,21 @@ void *mm_realloc(void *old_ptr, size_t size) {
  * byte set to 0, and returns a pointer to it.
  */
 void *mm_calloc(size_t nmemb, size_t size) {
-    (void) nmemb;
-    (void) size;
-    return NULL;
+    if (size != 0 && nmemb > SIZE_MAX / size) {
+        return NULL;
+    }
+
+    size_t total_size = nmemb * size;
+
+    void *ptr = mm_malloc(total_size);
+
+    if (ptr == NULL) {
+        return NULL;
+    }
+
+    memset(ptr, 0, total_size);
+
+    return ptr;
 }
 
 /**
